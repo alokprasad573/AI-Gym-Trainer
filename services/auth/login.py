@@ -6,8 +6,9 @@ def login_form():
     if st.session_state.get("user_id") is not None:
         return True
     
-    st.title("AI Gym Trainer")
-    st.markdown("Please Enter your username to start")
+    st.title("GymGenie")
+    st.subheader("Personal AI based Realtime Gym Coach")
+
     
     with st.form("login_form"):
         username = st.text_input("Enter username", placeholder='alok1234')
