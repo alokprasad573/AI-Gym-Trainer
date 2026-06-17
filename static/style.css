@@ -8,6 +8,10 @@
   background-color: #111520;
 }
 
+#MainMenu, footer, header {
+  visibility: hidden;
+}
+
 /* Typography */
 .block-container,
 .block-container * {
