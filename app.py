@@ -1,18 +1,20 @@
 import streamlit as st
 import os
 import time
-import pandas as pd
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
 from services.auth.login import login_form
 from services.state.session_defaults import initial_session_defaults
 from services.config.workout_config import EXERCISE_OPTIONS
 from services.ui.style_loader import load_css, inject_local_font, inject_webrtc_styles
-from services.persistence.exercise_repository import init_db, add_exercise, get_users_exercises
+from services.persistence.exercise_repository import init_db
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 from services.vision.exercise_video_processor import VideoProcessorClass
-def app():
+from services.tracking.metrics import sync_metrics_update
+
+  
+def main():
     st.set_page_config(
         page_icon="🏋️‍♀️",
-        page_title="GymGenie | AI Real-time GYM Coach",
+        page_title="AI Real-time GYM Coach",
         initial_sidebar_state="expanded",
         layout="centered"
     )
@@ -21,83 +23,68 @@ def app():
     inject_local_font(os.path.join(os.getcwd(), "static", "AdobeClean.otf"), "AdobeClean")
 
     init_db()
+
     if not login_form():
         return 
-    
+
     initial_session_defaults()
 
     workout_started = st.session_state.get("workout_started", False)
     
     with st.sidebar:
-        st.title("🏋️‍♂️ GymGenie")
+        st.title("🏋️‍♂️ Apna AI Coach")
 
-        if st.session_state.get("username"):
-            st.caption(f"👤 Logged In as {st.session_state.get('username')}")
+        if st.session_state.username:
+            st.caption(f"👤 Login as {st.session_state.username}")
 
         st.divider()
 
         st.subheader("Workout Plan")
 
         if not workout_started:
-            st.selectbox("Exercise", options=EXERCISE_OPTIONS, key="plan_exercise")
+            plan_exercise = st.selectbox("Exercise", options=EXERCISE_OPTIONS, key="plan_exercise")
 
-            st.number_input("Sets", min_value=0, max_value=50, key="plan_sets", step=1)
+            plan_sets = st.number_input("Sets", min_value=0, max_value=50, key="plan_sets", step=1)
 
-            st.number_input("Reps per Set", min_value=0, max_value=50, key="plan_reps", step=1)
+            plan_reps = st.number_input("Reps per Set", min_value=0, max_value=50, key="plan_reps", step=1)
 
             st.markdown("")
 
-            start_workout_button = st.button("Start Workout", use_container_width=True, key="start_workout_button")
+            start_session_button = st.button("Start Workout", width="stretch", key="start_session_button")
 
-            if start_workout_button:
-                st.session_state["workout_started"] = True
-                st.session_state["workout_started_at"] = time.time()
+            if start_session_button:
+                st.session_state.exercise_type = plan_exercise
+                st.session_state.target_sets = int(plan_sets)
+                st.session_state.reps_per_set = int(plan_reps)
+                st.session_state.reps = 0
+                st.session_state.workout_started = True
+                st.session_state.set_cycle_started_at = time.time()
+                st.session_state.last_saved_sets_completed = 0
+                st.session_state.last_notified_sets_completed = 0
+                st.session_state.last_notified_workout_complete = False
                 st.rerun()
         else:
-            exercise = st.session_state.get("plan_exercise")
-            sets = st.session_state.get("plan_sets")
-            reps = st.session_state.get("plan_reps")
+            exercise = st.session_state.get("exercise_type")
+            sets = st.session_state.get("target_sets")
+            reps = st.session_state.get("reps_per_set")
 
-            st.info(
-                f"**Exercise:** {exercise}\n\n"
-                f"**Sets:** {sets}\n\n"
-                f"**Reps:** {reps}"
-            )
+            st.info(f"**{exercise}** -- {sets} Sets / {reps} Reps")
 
-            end_workout_button = st.button("End Workout", key="end_session_button", use_container_width=True)
+            end_session_button = st.button("End Workout", key="end_session_button", width="stretch")
 
-            if end_workout_button:
-                # Calculate duration
-                duration = 0
-                if "workout_started_at" in st.session_state:
-                    duration = int(time.time() - st.session_state["workout_started_at"])
-                
-                # Persist to SQL database
-                if st.session_state.get("user_id"):
-                    add_exercise(
-                        user_id=st.session_state["user_id"],
-                        exercise_name=st.session_state.get("plan_exercise"),
-                        reps=st.session_state.get("reps", 0),
-                        sets=st.session_state.get("sets_completed", 0),
-                        time=duration
-                    )
-                
-                # Reset workout progress metrics
-                st.session_state["workout_started"] = False
-                st.session_state["reps"] = 0
-                st.session_state["sets_completed"] = 0
-                st.session_state["current_set_reps"] = 0
+            if end_session_button:
+                st.session_state.workout_started = False
                 st.rerun()
 
         if workout_started:
             st.divider()
 
-            exercise = st.session_state.get("plan_exercise")
+            exercise = st.session_state.get("exercise_type")
             total_reps = st.session_state.get("reps")
             current_set_reps = st.session_state.get("current_set_reps")
-            reps_per_set = st.session_state.get("plan_reps")
+            reps_per_set = st.session_state.get("reps_per_set")
             sets_completed = st.session_state.get("sets_completed")
-            target_sets = st.session_state.get("plan_sets")
+            target_sets = st.session_state.get("target_sets")
 
             st.subheader("Progress")
 
@@ -136,70 +123,53 @@ def app():
                 st.metric("Front Knee Angle", f"{st.session_state.front_knee_angle}°")
                 st.metric("Torso Angle", f"{st.session_state.torso_angle}°")
                 st.metric("Balance Status", st.session_state.balance_status)
-    
+
     st.title("AI Real-time GYM Coach")
     st.markdown("#### Real-time pose detection with proactive AI voice coaching")
 
     if not workout_started:
         st.markdown(
-        """
-        <div style="
-            border: 10px dashed #444;
-            border-radius: 0px;
-            padding: 48px 32px;
-            text-align: center;
-            color: #888;
-            margin-top: 32px;
-        ">
-            <h2 style="color:#ccc; margin-bottom:8px;">👈 Set your workout plan</h2>
-            <p style="font-size:1.05rem;">
-                Choose your exercise, sets and reps in the sidebar,<br>
-                then click <strong>Start Workout</strong> to activate the camera and AI coach.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """
+            <div style="
+                border: 10px dashed #444;
+                border-radius: 0px;
+                padding: 48px 32px;
+                text-align: center;
+                color: #888;
+                margin-top: 32px;
+            ">
+                <h2 style="color:#ccc; margin-bottom:8px;">👈 Set your workout plan</h2>
+                <p style="font-size:1.05rem;">
+                    Choose your exercise, sets and reps in the sidebar,<br>
+                    then click <strong>Start Workout</strong> to activate the camera and AI coach.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
         context = webrtc_streamer(
             key="exercise-analysis",
             mode=WebRtcMode.SENDRECV,
             video_processor_factory=VideoProcessorClass,
             rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        media_stream_constraints={
-            "video": True,
-            "audio": True
-        },
-        async_processing=True
-    )
-        
-    st.markdown("### Workout History")
-    if st.session_state.get("user_id"):
-        history = get_users_exercises(st.session_state["user_id"])
-        if history:
-            history_data = []
-            for row in history:
-                dur_sec = row["time"]
-                dur_str = f"{dur_sec // 60:02d}:{dur_sec % 60:02d}" if dur_sec > 0 else "00:00"
-                history_data.append({
-                    "Date & Time": row["created_at"],
-                    "Exercise": row["exercise_name"],
-                    "Sets Completed": row["sets"],
-                    "Total Reps": row["reps"],
-                    "Duration": dur_str
-                })
-            df = pd.DataFrame(history_data)
-            df = df.sort_values(by="Date & Time", ascending=False)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No workout history found yet. Complete a workout session to see your progress here!")
-    else:
-        st.warning("Please log in to view your workout history.")
+            media_stream_constraints={
+                "video": True,
+                "audio": False
+            },
+            async_processing=True
+        )
 
-    inject_webrtc_styles()
+        sync_metrics_update(context)
+
+        if context.state.playing:
+            time.sleep(0.25)
+            st.rerun()
+
+        inject_webrtc_styles()
+
+    st.markdown("#### Workout History")
 
 
-if __name__=="__main__":
-    app()
-
-
+if __name__ == "__main__":
+    main()
