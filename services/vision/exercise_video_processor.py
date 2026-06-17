@@ -22,6 +22,15 @@ class VideoProcessorClass(VideoProcessorBase):
         self._exercise_type = "Squats"
 
         model_path = os.path.join(os.getcwd(), "ml_models", "pose_landmarker_full.task")
+        model_dir = os.path.dirname(model_path)
+        os.makedirs(model_dir, exist_ok=True)
+        if not os.path.exists(model_path):
+            import urllib.request
+            url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task"
+            print(f"Downloading pose landmarker model from {url}...")
+            urllib.request.urlretrieve(url, model_path)
+            print("Download completed.")
+
         base_option = python.BaseOptions(model_asset_path=model_path)
 
         options = vision.PoseLandmarkerOptions(
